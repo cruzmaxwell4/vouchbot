@@ -1,7 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
-
-let vouchCategories = ["accounts", "prem_gen", "methods", "replacements", "amazon_card", "other"];
-let vouchPerson = null;
+const { loadConfig } = require('../config');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -42,8 +40,10 @@ module.exports = {
     ),
 
   async execute(interaction) {
+    const config = loadConfig();
+    
     // Check if person is set
-    if (!vouchPerson) {
+    if (!config.vouchPerson) {
       await interaction.reply({
         content: 'Owner has not set a person to vouch for yet',
         flags: MessageFlags.Ephemeral,
@@ -74,7 +74,7 @@ module.exports = {
       .setTitle('✅ New Vouch')
       .setDescription(`**Vouch Category:** ${categoryName}`)
       .addFields(
-        { name: 'Vouching For', value: `<@${vouchPerson}>`, inline: true },
+        { name: 'Vouching For', value: `<@${config.vouchPerson}>`, inline: true },
         { name: 'Rating', value: stars, inline: true },
         { name: 'Message', value: message, inline: false },
         {

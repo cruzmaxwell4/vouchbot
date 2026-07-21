@@ -1,18 +1,16 @@
-const { SlashCommandBuilder, MessageFlags, PermissionFlagsBits } = require('discord.js');
-
-let vouchCategories = ["accounts", "prem_gen", "methods", "replacements", "amazon_card", "other"];
-let vouchPerson = null;
+const { SlashCommandBuilder, MessageFlags } = require('discord.js');
+const { loadConfig, saveConfig } = require('../config');
 
 const OWNER_ID = process.env.OWNER_ID;
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('vouchconfig')
-    .setDescription('Configure vouch categories (Owner only)')
+    .setDescription('Configure vouch settings (Owner only)')
     .setDefaultMemberPermissions(0)
     .addSubcommand((sub) =>
       sub
-        .setName('addperson')
+        .setName('setperson')
         .setDescription('Set the person to vouch for (Owner only)')
         .addUserOption((opt) =>
           opt
@@ -28,30 +26,8 @@ module.exports = {
     )
     .addSubcommand((sub) =>
       sub
-        .setName('addcategory')
-        .setDescription('Add a vouch category')
-        .addStringOption((opt) =>
-          opt
-            .setName('category')
-            .setDescription('Category name')
-            .setRequired(true)
-        )
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName('removecategory')
-        .setDescription('Remove a vouch category')
-        .addStringOption((opt) =>
-          opt
-            .setName('category')
-            .setDescription('Category name')
-            .setRequired(true)
-        )
-    )
-    .addSubcommand((sub) =>
-      sub
         .setName('view')
-        .setDescription('View current person and categories')
+        .setDescription('View current vouch settings')
     ),
 
   async execute(interaction) {
@@ -64,44 +40,26 @@ module.exports = {
     }
 
     const subcommand = interaction.options.getSubcommand();
+    const config = loadConfig();
 
-    if (subcommand === 'addperson') {
+    if (subcommand === 'setperson') {
       const user = interaction.options.getUser('user');
-      vouchPerson = user.id;
+      config.vouchPerson = user.id;
+      saveConfig(config);
       await interaction.reply({
         content: `✅ Set vouch person to ${user}`,
         flags: MessageFlags.Ephemeral,
       });
     } else if (subcommand === 'removeperson') {
-      vouchPerson = null;
+      config.vouchPerson = null;
+      saveConfig(config);
       await interaction.reply({
         content: '🗑️ Removed vouch person',
         flags: MessageFlags.Ephemeral,
       });
-    } else if (subcommand === 'addcategory') {
-      const category = interaction.options.getString('category').toLowerCase();
-      if (!vouchCategories.includes(category)) {
-        vouchCategories.push(category);
-        await interaction.reply({
-          content: `✅ Added category: ${category}`,
-          flags: MessageFlags.Ephemeral,
-        });
-      } else {
-        await interaction.reply({
-          content: 'Category already exists',
-          flags: MessageFlags.Ephemeral,
-        });
-      }
-    } else if (subcommand === 'removecategory') {
-      const category = interaction.options.getString('category').toLowerCase();
-      vouchCategories = vouchCategories.filter((c) => c !== category);
-      await interaction.reply({
-        content: `🗑️ Removed category: ${category}`,
-        flags: MessageFlags.Ephemeral,
-      });
     } else if (subcommand === 'view') {
-      const person = vouchPerson ? `<@${vouchPerson}>` : 'None set';
-      const categories = vouchCategories.join(', ');
+      const person = config.vouchPerson ? `<@${config.vouchPerson}>` : 'None set';
+      const categories = config.vouchCategories.join(', ');
       await interaction.reply({
         content: `**Vouch Person:** ${person}\n**Categories:** ${categories}`,
         flags: MessageFlags.Ephemeral,
