@@ -1,0 +1,41 @@
+const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
+
+// Global XP roles
+let xpRoles = [];
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('xproles')
+    .setDescription('Set which roles gain XP (Owner only)')
+    .setDefaultMemberPermissions(0)
+    .addRoleOption((opt) =>
+      opt
+        .setName('role')
+        .setDescription('Role to add/remove from XP')
+        .setRequired(true)
+    ),
+  
+  async execute(interaction) {
+    const OWNER_ID = process.env.OWNER_ID;
+    if (interaction.user.id !== OWNER_ID) {
+      await interaction.reply({ content: 'Owner only!', flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const role = interaction.options.getRole('role');
+    if (!role) return;
+
+    if (xpRoles.includes(role.id)) {
+      xpRoles = xpRoles.filter(r => r !== role.id);
+      await interaction.reply({ content: `❌ Removed ${role.name} from XP roles`, flags: MessageFlags.Ephemeral });
+    } else {
+      xpRoles.push(role.id);
+      await interaction.reply({ content: `✅ Added ${role.name} to XP roles`, flags: MessageFlags.Ephemeral });
+    }
+  },
+  
+  // Export functions
+  getXpRoles: () => xpRoles,
+  setXpRoles: (roles) => { xpRoles = roles; },
+};
+
