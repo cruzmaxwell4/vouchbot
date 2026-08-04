@@ -4,7 +4,7 @@ const path = require('path');
 const { Client, Collection, GatewayIntentBits, Events } = require('discord.js');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.MessageContent],
 });
 
 client.commands = new Collection();
@@ -22,13 +22,18 @@ for (const file of commandFiles) {
   }
 }
 
+// XP system
+const xpshow = require('./commands/xpshow');
+const xproles = require('./commands/xproles');
+const XP_PER_MESSAGE = 0.5;
+
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot ready as ${readyClient.user.tag}`);
   
   // Register commands globally
   try {
-    const commands = client.commands.map((cmd) => cmd.data.toJSON());
-    await client.application.commands.set(commands);
+    const commands = readyClient.commands.map((cmd) => cmd.data.toJSON());
+    await readyClient.application.commands.set(commands);
     console.log(`✅ Registered ${commands.length} commands globally`);
   } catch (error) {
     console.error('Failed to register commands:', error);
@@ -54,6 +59,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } else {
       await interaction.reply(errorReply);
     }
+  }
+});
+
+// XP tracking on message
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  if (!message.guild || message.guild.id !== process.env.OWNER_SERVER_ID) return;
+
+  // Check if user has any XP roles
+  const userRoles = message.member?.roles.cache.map(r => r.id) || [];
+  const xpRoles = xproles.getXpRoles();
+  const hasXpRole = userRoles.some(rid => xpRoles.includes(rid));
+
+  if (hasXpRole) {
+    xpshow.addXp(message.author.id, XP_PER_MESSAGE);
+    console.log(`✓ ${message.author.username} gained ${XP_PER_MESSAGE} XP`);
   }
 });
 
