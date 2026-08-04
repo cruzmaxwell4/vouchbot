@@ -1,6 +1,7 @@
 // Shared XP system state - persists across all commands
 let xpData = {};
 let xpRoles = [];
+let xpExcludeChannels = [];
 let xpResetTimer = null;
 let resetTimestamp = null;
 
@@ -31,6 +32,26 @@ module.exports = {
     }
     return false;
   },
+
+  // XP Exclude Channels functions
+  getXpExcludeChannels: () => [...xpExcludeChannels], // Return copy
+  setXpExcludeChannels: (channels) => { xpExcludeChannels = [...channels]; },
+  addXpExcludeChannel: (channelId) => {
+    if (!xpExcludeChannels.includes(channelId)) {
+      xpExcludeChannels.push(channelId);
+      return true;
+    }
+    return false;
+  },
+  removeXpExcludeChannel: (channelId) => {
+    const index = xpExcludeChannels.indexOf(channelId);
+    if (index > -1) {
+      xpExcludeChannels.splice(index, 1);
+      return true;
+    }
+    return false;
+  },
+  isChannelExcluded: (channelId) => xpExcludeChannels.includes(channelId),
 
   // Reset timer functions
   getResetTimer: () => xpResetTimer,

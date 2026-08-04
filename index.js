@@ -88,6 +88,11 @@ client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
     if (!message.guild || message.guild.id !== process.env.OWNER_SERVER_ID) return;
 
+    // Check if channel is excluded from XP
+    if (xpSystem.isChannelExcluded(message.channelId)) {
+      return;
+    }
+
     // Check if user has any XP roles
     const userRoles = message.member?.roles.cache.map(r => r.id) || [];
     const xpRoles = xpSystem.getXpRoles();
@@ -95,7 +100,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     if (hasXpRole) {
       xpSystem.addXp(message.author.id, XP_PER_MESSAGE);
-      console.log(`✓ ${message.author.username} gained ${XP_PER_MESSAGE} XP`);
+      console.log(`✓ ${message.author.username} gained ${XP_PER_MESSAGE} XP in #${message.channel.name}`);
     }
   } catch (err) {
     console.error('Error in messageCreate handler:', err);
