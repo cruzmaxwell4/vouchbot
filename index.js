@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Client, Collection, GatewayIntentBits, Events } = require('discord.js');
+const xpSystem = require('./xpSystem');
 
 const client = new Client({
   intents: [
@@ -32,9 +33,6 @@ for (const file of commandFiles) {
   }
 }
 
-// XP system
-const xpshow = require('./commands/xpshow');
-const xproles = require('./commands/xproles');
 const XP_PER_MESSAGE = 0.5;
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -66,6 +64,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   try {
+    // Pass xpSystem to commands that need it
+    command.xpSystem = xpSystem;
     await command.execute(interaction);
   } catch (error) {
     console.error(`Error while executing /${interaction.commandName}:`, error);
@@ -90,11 +90,11 @@ client.on(Events.MessageCreate, async (message) => {
 
     // Check if user has any XP roles
     const userRoles = message.member?.roles.cache.map(r => r.id) || [];
-    const xpRoles = xproles.getXpRoles();
+    const xpRoles = xpSystem.getXpRoles();
     const hasXpRole = userRoles.some(rid => xpRoles.includes(rid));
 
     if (hasXpRole) {
-      xpshow.addXp(message.author.id, XP_PER_MESSAGE);
+      xpSystem.addXp(message.author.id, XP_PER_MESSAGE);
       console.log(`✓ ${message.author.username} gained ${XP_PER_MESSAGE} XP`);
     }
   } catch (err) {

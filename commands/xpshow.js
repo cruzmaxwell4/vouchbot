@@ -1,13 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
-// Global XP data - persists in memory during bot lifetime
-let xpData = {};
-let xpRoles = [];
-const XP_PER_MESSAGE = 0.5;
-let xpResetTimer = null;
-let resetInProgress = false;
-let resetTimestamp = null;
-
 function getTimeRemaining(ms) {
   const totalSeconds = Math.floor(ms / 1000);
   const days = Math.floor(totalSeconds / 86400);
@@ -28,14 +20,11 @@ function formatTime(time) {
   return `${String(time.days).padStart(2, '0')}d ${String(time.hours).padStart(2, '0')}h ${String(time.minutes).padStart(2, '0')}m ${String(time.seconds).padStart(2, '0')}s`;
 }
 
-async function performReset(client) {
-  if (resetInProgress) return;
-  resetInProgress = true;
-  
+async function performReset(client, xpSystem) {
   try {
-    xpData = {};
-    resetTimestamp = null;
     console.log('✓ XP data reset after 2 weeks');
+    xpSystem.resetXpData();
+    xpSystem.setResetTimestamp(null);
 
     // Post reset panel to vouch channel
     try {
@@ -52,7 +41,7 @@ async function performReset(client) {
               value: `<t:${Math.floor((Date.now() + 14 * 24 * 60 * 60 * 1000) / 1000)}:R>`,
               inline: false
             })
-            .setFooter({ text: `${XP_PER_MESSAGE} XP per message` });
+            .setFooter({ text: '0.50 XP per message' });
           
           await channel.send({ embeds: [resetEmbed] });
         }
@@ -62,48 +51,13 @@ async function performReset(client) {
     }
   } catch (err) {
     console.error('Error during XP reset:', err);
-  } finally {
-    resetInProgress = false;
-  }
-}
-
-async function updateTimerMessage(message) {
-  try {
-    if (!resetTimestamp || !message) return;
-
-    const timeRemaining = resetTimestamp - Date.now();
-    if (timeRemaining <= 0) {
-      await message.edit({ content: 'Time expired!' });
-      return;
-    }
-
-    const time = getTimeRemaining(timeRemaining);
-    const timerEmbed = new EmbedBuilder()
-      .setColor('#0099FF')
-      .setTitle('⏱️ XP RESET TIMER')
-      .setDescription(`\`\`\`\n${formatTime(time)}\n\`\`\``)
-      .addFields({
-        name: 'Seconds Remaining',
-        value: `${time.totalSeconds.toLocaleString()}`,
-        inline: true
-      },
-      {
-        name: 'Next Reset',
-        value: `<t:${Math.floor(resetTimestamp / 1000)}:R>`,
-        inline: true
-      })
-      .setFooter({ text: 'Updates every 10 seconds' });
-
-    await message.edit({ embeds: [timerEmbed] });
-  } catch (err) {
-    console.error('Error updating timer:', err);
   }
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('xpshow')
-    .setDescription('Show XP leaderboard by roles (Owner only)')
+    .setDescription('Show XP leaderboard by roles')
     .setDefaultMemberPermissions(0),
   
   async execute(interaction) {
@@ -114,9 +68,12 @@ module.exports = {
         return;
       }
 
+      const xpSystem = this.xpSystem;
+      const xpRoles = xpSystem.getXpRoles();
+
       if (xpRoles.length === 0) {
         await interaction.reply({
-          content: '❌ No XP roles set. Use `/xproles` to add roles.',
+          content: '❌ No XP roles set. Use `/xproles add` to add roles.',
           flags: MessageFlags.Ephemeral
         });
         return;
@@ -141,8 +98,9 @@ module.exports = {
             .map(member => ({
               id: member.user.id,
               name: member.user.username,
-              xp: xpData[member.user.id] || 0
+              xp: xpSystem.getXpData()[member.user.id] || 0
             }))
+            .filter(user => user.xp > 0) // Only show users with XP
             .sort((a, b) => b.xp - a.xp);
 
           if (usersWithRole.length === 0) {
@@ -175,7 +133,7 @@ module.exports = {
             },
             {
               name: '💰 Per Message',
-              value: `${XP_PER_MESSAGE} XP`,
+              value: `0.50 XP`,
               inline: true
             })
             .setTimestamp();
@@ -195,9 +153,11 @@ module.exports = {
       }
 
       // Create timer embed (big and blue with live countdown)
+      let resetTimestamp = xpSystem.getResetTimestamp();
       if (!resetTimestamp) {
         const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
         resetTimestamp = Date.now() + twoWeeksMs;
+        xpSystem.setResetTimestamp(resetTimestamp);
       }
 
       const timeRemaining = resetTimestamp - Date.now();
@@ -226,6 +186,7 @@ module.exports = {
       // Update timer every 10 seconds
       const timerInterval = setInterval(async () => {
         try {
+          let resetTimestamp = xpSystem.getResetTimestamp();
           if (!resetTimestamp) {
             clearInterval(timerInterval);
             return;
@@ -264,15 +225,17 @@ module.exports = {
       }, 10000); // Update every 10 seconds
 
       // Start 2-week timer if not already running
+      let xpResetTimer = xpSystem.getResetTimer();
       if (!xpResetTimer) {
         const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
         
         xpResetTimer = setTimeout(async () => {
-          xpResetTimer = null;
+          xpSystem.setResetTimer(null);
           clearInterval(timerInterval);
-          await performReset(interaction.client);
+          await performReset(interaction.client, xpSystem);
         }, twoWeeksMs);
 
+        xpSystem.setResetTimer(xpResetTimer);
         console.log('✓ Started 2-week XP reset timer');
       }
     } catch (err) {
@@ -286,19 +249,5 @@ module.exports = {
       }
     }
   },
-  
-  // Export functions for other modules to use
-  getXpData: () => xpData,
-  setXpData: (data) => { xpData = data; },
-  getXpRoles: () => xpRoles,
-  setXpRoles: (roles) => { xpRoles = roles; },
-  addXp: (userId, amount) => {
-    try {
-      xpData[userId] = (xpData[userId] || 0) + amount;
-    } catch (err) {
-      console.error('Error adding XP:', err);
-    }
-  },
-  getResetTimer: () => resetTimestamp,
 };
 
