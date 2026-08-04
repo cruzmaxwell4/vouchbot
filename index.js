@@ -15,18 +15,19 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// ===== SHARED STATE (XP System) =====
+// SHARED STATE
 const xpState = {
   data: {},
   roles: [],
   excludeChannels: [],
-  resetTimer: null,
-  resetTimestamp: null,
+  panelMessageId: null,
+  panelChannelId: null,
+  refreshInterval: null,
 };
 
-client.xpState = xpState; // Attach to client so all commands can access it
+client.xpState = xpState;
 
-// ===== LOAD COMMANDS =====
+// LOAD COMMANDS
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
 
@@ -35,74 +36,57 @@ for (const file of commandFiles) {
     const command = require(path.join(commandsPath, file));
     if ('data' in command && 'execute' in command) {
       client.commands.set(command.data.name, command);
-    } else {
-      console.warn(`[WARNING] commands/${file} missing "data" or "execute".`);
     }
   } catch (err) {
-    console.error(`Error loading command ${file}:`, err.message);
+    console.error(`Error loading ${file}:`, err.message);
   }
 }
 
 const XP_PER_MESSAGE = 0.5;
 
-// ===== BOT READY =====
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot ready as ${readyClient.user.tag}`);
   
   try {
     const commands = readyClient.commands.map((cmd) => cmd.data.toJSON());
     await readyClient.application.commands.set(commands);
-    console.log(`✅ Registered ${commands.length} commands globally`);
+    console.log(`✅ Registered ${commands.length} commands`);
   } catch (error) {
-    console.error('Failed to register commands:', error);
+    console.error('Register error:', error.message);
   }
 });
 
-// ===== HANDLE COMMANDS =====
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const command = interaction.client.commands.get(interaction.commandName);
-  if (!command) {
-    console.error(`No handler for /${interaction.commandName}`);
-    try {
-      await interaction.reply({ content: 'Command not found.', ephemeral: true });
-    } catch (err) {
-      console.error('Error replying:', err.message);
-    }
-    return;
-  }
+  if (!command) return;
 
   try {
     command.xpState = xpState;
     await command.execute(interaction);
   } catch (error) {
-    console.error(`Error executing /${interaction.commandName}:`, error.message);
-    const errorMsg = { content: '❌ Error running command', ephemeral: true };
+    console.error(`Error in ${interaction.commandName}:`, error.message);
+    const msg = { content: '❌ Error', ephemeral: true };
     try {
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorMsg);
+        await interaction.followUp(msg);
       } else {
-        await interaction.reply(errorMsg);
+        await interaction.reply(msg);
       }
-    } catch (err) {
-      console.error('Error sending error reply:', err.message);
+    } catch (e) {
+      console.error('Reply error:', e.message);
     }
   }
 });
 
-// ===== XP TRACKING =====
 client.on(Events.MessageCreate, async (message) => {
   try {
     if (message.author.bot || !message.guild) return;
     if (message.guild.id !== process.env.OWNER_SERVER_ID) return;
 
-    // Check if channel is excluded
-    if (xpState.excludeChannels.includes(message.channelId)) {
-      return;
-    }
+    if (xpState.excludeChannels.includes(message.channelId)) return;
 
-    // Check if user has XP role
     const userRoles = message.member?.roles.cache.map(r => r.id) || [];
     const hasXpRole = userRoles.some(rid => xpState.roles.includes(rid));
 
@@ -111,40 +95,31 @@ client.on(Events.MessageCreate, async (message) => {
       console.log(`✓ ${message.author.username} +${XP_PER_MESSAGE} XP`);
     }
   } catch (err) {
-    console.error('Error in message handler:', err.message);
+    console.error('Message error:', err.message);
   }
 });
 
-// ===== AUTO-LEAVE NON-OWNER GUILDS =====
 client.on(Events.GuildCreate, (guild) => {
   try {
     if (guild.id !== process.env.OWNER_SERVER_ID) {
       guild.leave();
-      console.log(`Left guild: ${guild.name}`);
     }
   } catch (err) {
-    console.error('Error in guildCreate:', err.message);
+    console.error('Guild error:', err.message);
   }
 });
 
-// ===== GLOBAL ERROR HANDLERS =====
 process.on('unhandledRejection', (error) => {
-  console.error('Unhandled Rejection:', error?.message || error);
+  console.error('Unhandled:', error?.message || error);
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error?.message || error);
+  console.error('Exception:', error?.message || error);
 });
 
-client.on(Events.Warn, (warning) => {
-  console.warn('Discord warning:', warning);
-});
+client.on(Events.Warn, (w) => console.warn('Warn:', w));
+client.on('error', (e) => console.error('Error:', e?.message));
 
-client.on('error', (error) => {
-  console.error('Discord error:', error?.message || error);
-});
-
-// ===== LOGIN =====
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 if (!TOKEN) throw new Error('DISCORD_BOT_TOKEN not set');
 
@@ -152,7 +127,7 @@ async function login() {
   try {
     await client.login(TOKEN);
   } catch (err) {
-    console.error('Login failed, retrying in 10s...', err.message);
+    console.error('Login failed, retry in 10s...', err.message);
     setTimeout(login, 10000);
   }
 }
