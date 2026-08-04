@@ -1,94 +1,49 @@
-const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('xproles')
-    .setDescription('Manage XP roles (Owner only)')
+    .setDescription('Manage XP earning roles')
     .setDefaultMemberPermissions(0)
-    .addSubcommand((sub) =>
-      sub
-        .setName('add')
-        .setDescription('Add one or more roles to earn XP')
-        .addRoleOption((opt) =>
-          opt
-            .setName('role1')
-            .setDescription('First role')
-            .setRequired(true)
-        )
-        .addRoleOption((opt) =>
-          opt
-            .setName('role2')
-            .setDescription('Second role (optional)')
-            .setRequired(false)
-        )
-        .addRoleOption((opt) =>
-          opt
-            .setName('role3')
-            .setDescription('Third role (optional)')
-            .setRequired(false)
-        )
-        .addRoleOption((opt) =>
-          opt
-            .setName('role4')
-            .setDescription('Fourth role (optional)')
-            .setRequired(false)
-        )
-        .addRoleOption((opt) =>
-          opt
-            .setName('role5')
-            .setDescription('Fifth role (optional)')
-            .setRequired(false)
-        )
+    .addSubcommand(sub =>
+      sub.setName('add').setDescription('Add roles (up to 5)')
+        .addRoleOption(o => o.setName('r1').setDescription('Role 1').setRequired(true))
+        .addRoleOption(o => o.setName('r2').setDescription('Role 2'))
+        .addRoleOption(o => o.setName('r3').setDescription('Role 3'))
+        .addRoleOption(o => o.setName('r4').setDescription('Role 4'))
+        .addRoleOption(o => o.setName('r5').setDescription('Role 5'))
     )
-    .addSubcommand((sub) =>
-      sub
-        .setName('remove')
-        .setDescription('Remove a role from XP earning')
-        .addRoleOption((opt) =>
-          opt
-            .setName('role')
-            .setDescription('Role to remove')
-            .setRequired(true)
-        )
+    .addSubcommand(sub =>
+      sub.setName('remove').setDescription('Remove a role')
+        .addRoleOption(o => o.setName('role').setDescription('Role to remove').setRequired(true))
     )
-    .addSubcommand((sub) =>
-      sub
-        .setName('list')
-        .setDescription('List all XP roles')
+    .addSubcommand(sub =>
+      sub.setName('list').setDescription('List all XP roles')
     ),
   
   async execute(interaction) {
     try {
-      const OWNER_ID = process.env.OWNER_ID;
-      if (interaction.user.id !== OWNER_ID) {
-        await interaction.reply({ content: '⛔ Owner only!', flags: MessageFlags.Ephemeral });
+      if (interaction.user.id !== process.env.OWNER_ID) {
+        await interaction.reply({ content: '⛔ Owner only!', ephemeral: true });
         return;
       }
 
-      const subcommand = interaction.options.getSubcommand();
-      const xpSystem = this.xpSystem;
+      const xpState = this.xpState;
+      const sub = interaction.options.getSubcommand();
 
-      if (subcommand === 'add') {
+      if (sub === 'add') {
         const roles = [];
         for (let i = 1; i <= 5; i++) {
-          const role = interaction.options.getRole(`role${i}`);
-          if (role) roles.push(role);
-        }
-
-        if (roles.length === 0) {
-          await interaction.reply({ content: '❌ No roles provided', flags: MessageFlags.Ephemeral });
-          return;
+          const r = interaction.options.getRole(`r${i}`);
+          if (r) roles.push(r);
         }
 
         let added = 0;
-        let already = 0;
-
         for (const role of roles) {
-          if (xpSystem.addXpRole(role.id)) {
+          if (!xpState.roles.includes(role.id)) {
+            xpState.roles.push(role.id);
             added++;
-            console.log(`✅ Added role: ${role.name}`);
-          } else {
-            already++;
+            console.log(`✅ XP role: ${role.name}`);
           }
         }
 
@@ -96,82 +51,50 @@ module.exports = {
           .setColor('#00A4FF')
           .setTitle('✅ XP Roles Updated')
           .addFields(
-            { name: '✅ Added', value: `${added}`, inline: true },
-            { name: '⚠️ Already Added', value: `${already}`, inline: true }
+            { name: 'Added', value: `${added}`, inline: true },
+            { name: 'Total', value: `${xpState.roles.length}`, inline: true }
           );
 
-        const currentRoles = xpSystem.getXpRoles();
-        if (currentRoles.length > 0) {
-          embed.addFields({
-            name: '📋 All XP Roles',
-            value: currentRoles.map(id => `<@&${id}>`).join(', '),
-            inline: false
-          });
+        if (xpState.roles.length > 0) {
+          embed.addFields({ name: 'Roles', value: xpState.roles.map(id => `<@&${id}>`).join(', '), inline: false });
         }
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      } else if (subcommand === 'remove') {
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+      } 
+      else if (sub === 'remove') {
         const role = interaction.options.getRole('role');
-        if (!role) {
-          await interaction.reply({ content: '❌ Invalid role', ephemeral: true });
-          return;
-        }
+        const idx = xpState.roles.indexOf(role.id);
 
-        if (xpSystem.removeXpRole(role.id)) {
+        if (idx > -1) {
+          xpState.roles.splice(idx, 1);
           const embed = new EmbedBuilder()
             .setColor('#FF6B6B')
             .setTitle('✅ Role Removed')
-            .setDescription(`Removed <@&${role.id}> from XP roles`);
+            .setDescription(`Removed <@&${role.id}>`)
+            .addFields({ name: 'Remaining', value: xpState.roles.length > 0 ? xpState.roles.map(id => `<@&${id}>`).join(', ') : 'None', inline: false });
 
-          const currentRoles = xpSystem.getXpRoles();
-          if (currentRoles.length > 0) {
-            embed.addFields({
-              name: '📋 Remaining XP Roles',
-              value: currentRoles.map(id => `<@&${id}>`).join(', '),
-              inline: false
-            });
-          } else {
-            embed.addFields({
-              name: '📋 XP Roles',
-              value: 'None',
-              inline: false
-            });
-          }
-
-          await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+          await interaction.reply({ embeds: [embed], ephemeral: true });
         } else {
-          await interaction.reply({ content: '⚠️ Role was not in XP roles list', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: '⚠️ Role not in list', ephemeral: true });
         }
-      } else if (subcommand === 'list') {
-        const currentRoles = xpSystem.getXpRoles();
-        
-        if (currentRoles.length === 0) {
-          await interaction.reply({ content: '📭 No XP roles set', flags: MessageFlags.Ephemeral });
+      } 
+      else if (sub === 'list') {
+        if (xpState.roles.length === 0) {
+          await interaction.reply({ content: '📭 No XP roles set', ephemeral: true });
           return;
         }
 
         const embed = new EmbedBuilder()
           .setColor('#00A4FF')
           .setTitle('📋 XP Roles')
-          .setDescription(currentRoles.map(id => `<@&${id}>`).join('\n'))
-          .addFields({
-            name: '👥 Total',
-            value: `${currentRoles.length}`,
-            inline: true
-          })
-          .setTimestamp();
+          .setDescription(xpState.roles.map(id => `<@&${id}>`).join('\n'))
+          .addFields({ name: 'Count', value: `${xpState.roles.length}`, inline: true });
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
       }
     } catch (err) {
-      console.error('Error in xproles command:', err);
-      try {
-        if (!interaction.replied) {
-          await interaction.reply({ content: '❌ Error managing XP roles', ephemeral: true });
-        }
-      } catch (e) {
-        console.error('Failed to send error reply:', e);
-      }
+      console.error('xproles error:', err.message);
+      await interaction.reply({ content: '❌ Error', ephemeral: true });
     }
   },
 };
