@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // Global XP data - persists in memory during bot lifetime
 let xpData = {};
@@ -6,6 +6,21 @@ let xpRoles = [];
 const XP_PER_MESSAGE = 0.5;
 let xpResetTimer = null;
 let resetInProgress = false;
+let resetTimestamp = null;
+
+function formatTimeRemaining(ms) {
+  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+  
+  if (days > 0) {
+    return `${days}d ${hours}h ${minutes}m`;
+  } else if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  } else {
+    return `${minutes}m`;
+  }
+}
 
 async function performReset(client) {
   if (resetInProgress) return;
@@ -13,6 +28,7 @@ async function performReset(client) {
   
   try {
     xpData = {};
+    resetTimestamp = null;
     console.log('✓ XP data reset after 2 weeks');
 
     // Post reset panel to vouch channel
@@ -22,10 +38,16 @@ async function performReset(client) {
         const channel = await client.channels.fetch(VOUCH_CHANNEL_ID);
         if (channel?.isTextBased()) {
           const resetEmbed = new EmbedBuilder()
-            .setColor('#2f3136')
-            .setTitle('✅ XP Reset')
-            .setDescription('XP leaderboard has been reset! New 2-week cycle begins.')
-            .setFooter({ text: `${XP_PER_MESSAGE} XP per message • Next reset in 2 weeks` });
+            .setColor('#00A4FF')
+            .setTitle('🔄 XP LEADERBOARD RESET')
+            .setDescription('The XP leaderboard has been reset! New 2-week cycle begins.')
+            .addFields({
+              name: '⏱️ New Reset Time',
+              value: `<t:${Math.floor((Date.now() + 14 * 24 * 60 * 60 * 1000) / 1000)}:R>`,
+              inline: false
+            })
+            .setFooter({ text: '${XP_PER_MESSAGE} XP per message' });
+          
           await channel.send({ embeds: [resetEmbed] });
         }
       }
@@ -49,34 +71,82 @@ module.exports = {
     try {
       const OWNER_ID = process.env.OWNER_ID;
       if (interaction.user.id !== OWNER_ID) {
-        await interaction.reply({ content: 'Owner only!', flags: MessageFlags.Ephemeral });
+        const timerEmbed = new EmbedBuilder()
+          .setColor('#00A4FF')
+          .setTitle('⏱️ XP RESET TIMER')
+          .setDescription(resetTimestamp ? formatTimeRemaining(resetTimestamp - Date.now()) : 'Not started');
+        
+        await interaction.reply({ embeds: [timerEmbed], flags: MessageFlags.Ephemeral });
         return;
       }
 
       // Create leaderboard sorted by XP
-      const leaderboard = Object.entries(xpData)
+      const sorted = Object.entries(xpData)
         .sort(([, a], [, b]) => b - a)
-        .slice(0, 10) // Top 10
-        .map(([userId, xp], index) => `${index + 1}. <@${userId}> - ${xp.toFixed(2)} XP`)
-        .join('\n') || 'No XP data yet';
+        .slice(0, 15); // Top 15
 
-      const embed = new EmbedBuilder()
-        .setColor('#2f3136')
-        .setTitle('📊 XP Leaderboard')
-        .setDescription(leaderboard)
-        .addFields({
-          name: 'Active Roles',
-          value: xpRoles.length > 0 ? xpRoles.map(id => `<@&${id}>`).join(', ') : 'None set',
-          inline: false
-        })
-        .setFooter({ text: `${XP_PER_MESSAGE} XP per message • Auto-reset in 2 weeks` })
+      const leaderboardText = sorted.length > 0
+        ? sorted.map(([userId, xp], index) => {
+            const medals = ['🥇', '🥈', '🥉'];
+            const medal = medals[index] || `${index + 1}.`;
+            return `${medal} <@${userId}> • **${xp.toFixed(2)} XP**`;
+          }).join('\n')
+        : '📭 No XP data yet';
+
+      // Get total players
+      const totalPlayers = Object.keys(xpData).length;
+      const totalXp = Object.values(xpData).reduce((a, b) => a + b, 0);
+
+      // Create main leaderboard embed
+      const leaderboardEmbed = new EmbedBuilder()
+        .setColor('#00A4FF')
+        .setTitle('📊 XP LEADERBOARD')
+        .setDescription(leaderboardText)
+        .setThumbnail(interaction.client.user.displayAvatarURL())
+        .addFields(
+          {
+            name: '👥 Players',
+            value: `${totalPlayers}`,
+            inline: true
+          },
+          {
+            name: '⭐ Total XP',
+            value: `${totalXp.toFixed(2)}`,
+            inline: true
+          },
+          {
+            name: '💰 Per Message',
+            value: `${XP_PER_MESSAGE} XP`,
+            inline: true
+          },
+          {
+            name: '🎯 Active Roles',
+            value: xpRoles.length > 0 ? xpRoles.map(id => `<@&${id}>`).join(', ') : 'None set',
+            inline: false
+          }
+        )
         .setTimestamp();
 
-      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      // Create timer embed (big and blue)
+      const timeRemaining = resetTimestamp ? resetTimestamp - Date.now() : 14 * 24 * 60 * 60 * 1000;
+      const timerEmbed = new EmbedBuilder()
+        .setColor('#0099FF')
+        .setTitle('⏱️ XP RESET TIMER')
+        .setDescription(`\`\`\`\n${formatTimeRemaining(timeRemaining)}\n\`\`\``)
+        .addFields({
+          name: 'Next Reset',
+          value: `<t:${Math.floor((Date.now() + timeRemaining) / 1000)}:R>`,
+          inline: false
+        })
+        .setFooter({ text: 'Resets automatically in 2 weeks' });
+
+      await interaction.reply({ embeds: [leaderboardEmbed, timerEmbed] });
 
       // Start 2-week timer if not already running
       if (!xpResetTimer) {
         const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
+        resetTimestamp = Date.now() + twoWeeksMs;
+        
         xpResetTimer = setTimeout(async () => {
           xpResetTimer = null;
           await performReset(interaction.client);
@@ -108,5 +178,6 @@ module.exports = {
       console.error('Error adding XP:', err);
     }
   },
+  getResetTimer: () => resetTimestamp,
 };
 
