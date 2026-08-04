@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 
 function getTimeRemaining(ms) {
   const totalSeconds = Math.floor(ms / 1000);
@@ -26,7 +26,6 @@ async function performReset(client, xpSystem) {
     xpSystem.resetXpData();
     xpSystem.setResetTimestamp(null);
 
-    // Post reset panel to vouch channel
     try {
       const VOUCH_CHANNEL_ID = process.env.VOUCH_CHANNEL_ID;
       if (VOUCH_CHANNEL_ID) {
@@ -56,8 +55,8 @@ async function performReset(client, xpSystem) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('xpshow')
-    .setDescription('Show XP leaderboard by roles')
+    .setName('xppanel')
+    .setDescription('Show XP leaderboard panel by roles (Owner only)')
     .setDefaultMemberPermissions(0),
   
   async execute(interaction) {
@@ -68,18 +67,19 @@ module.exports = {
         return;
       }
 
+      // Defer the reply as this might take time
+      await interaction.deferReply();
+
       const xpSystem = this.xpSystem;
       const xpRoles = xpSystem.getXpRoles();
 
       if (xpRoles.length === 0) {
-        await interaction.reply({
-          content: '❌ No XP roles set. Use `/xproles add` to add roles.',
-          flags: MessageFlags.Ephemeral
+        await interaction.editReply({
+          content: '❌ No XP roles set. Use `/xproles add` to add roles.'
         });
         return;
       }
 
-      // Create embeds for each role
       const embeds = [];
       const guild = interaction.guild;
 
@@ -91,7 +91,6 @@ module.exports = {
             continue;
           }
 
-          // Get all members with this role
           const membersWithRole = await guild.members.fetch();
           const usersWithRole = membersWithRole
             .filter(member => member.roles.cache.has(roleId))
@@ -100,14 +99,13 @@ module.exports = {
               name: member.user.username,
               xp: xpSystem.getXpData()[member.user.id] || 0
             }))
-            .filter(user => user.xp > 0) // Only show users with XP
+            .filter(user => user.xp > 0)
             .sort((a, b) => b.xp - a.xp);
 
           if (usersWithRole.length === 0) {
             continue;
           }
 
-          // Build leaderboard for this role
           const leaderboard = usersWithRole
             .slice(0, 10)
             .map((user, index) => {
@@ -145,14 +143,12 @@ module.exports = {
       }
 
       if (embeds.length === 0) {
-        await interaction.reply({
-          content: '❌ No roles found with members.',
-          flags: MessageFlags.Ephemeral
+        await interaction.editReply({
+          content: '❌ No roles found with members.'
         });
         return;
       }
 
-      // Create timer embed (big and blue with live countdown)
       let resetTimestamp = xpSystem.getResetTimestamp();
       if (!resetTimestamp) {
         const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
@@ -179,9 +175,8 @@ module.exports = {
         })
         .setFooter({ text: 'Updates every 10 seconds' });
 
-      // Send all embeds
       const allEmbeds = [...embeds, timerEmbed];
-      const response = await interaction.reply({ embeds: allEmbeds });
+      const response = await interaction.editReply({ embeds: allEmbeds });
 
       // Update timer every 10 seconds
       const timerInterval = setInterval(async () => {
@@ -215,16 +210,14 @@ module.exports = {
             })
             .setFooter({ text: 'Updates every 10 seconds' });
 
-          // Update only the timer embed (last one)
           const updatedEmbeds = [...embeds, updatedEmbed];
           await response.edit({ embeds: updatedEmbeds });
         } catch (err) {
           console.error('Error updating timer:', err);
           clearInterval(timerInterval);
         }
-      }, 10000); // Update every 10 seconds
+      }, 10000);
 
-      // Start 2-week timer if not already running
       let xpResetTimer = xpSystem.getResetTimer();
       if (!xpResetTimer) {
         const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
@@ -239,10 +232,12 @@ module.exports = {
         console.log('✓ Started 2-week XP reset timer');
       }
     } catch (err) {
-      console.error('Error in xpshow command:', err);
+      console.error('Error in xppanel command:', err);
       try {
-        if (!interaction.replied) {
+        if (!interaction.replied && !interaction.deferred) {
           await interaction.reply({ content: '❌ Error displaying leaderboard', ephemeral: true });
+        } else {
+          await interaction.editReply({ content: '❌ Error displaying leaderboard' });
         }
       } catch (e) {
         console.error('Failed to send error reply:', e);
