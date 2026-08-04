@@ -1,177 +1,100 @@
-const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('xpchannels')
-    .setDescription('Manage XP exclude channels (Owner only)')
+    .setDescription('Manage channels where XP is NOT earned')
     .setDefaultMemberPermissions(0)
-    .addSubcommand((sub) =>
-      sub
-        .setName('add')
-        .setDescription('Add channels where XP is NOT earned')
-        .addChannelOption((opt) =>
-          opt
-            .setName('channel1')
-            .setDescription('First channel')
-            .setRequired(true)
-        )
-        .addChannelOption((opt) =>
-          opt
-            .setName('channel2')
-            .setDescription('Second channel (optional)')
-            .setRequired(false)
-        )
-        .addChannelOption((opt) =>
-          opt
-            .setName('channel3')
-            .setDescription('Third channel (optional)')
-            .setRequired(false)
-        )
-        .addChannelOption((opt) =>
-          opt
-            .setName('channel4')
-            .setDescription('Fourth channel (optional)')
-            .setRequired(false)
-        )
-        .addChannelOption((opt) =>
-          opt
-            .setName('channel5')
-            .setDescription('Fifth channel (optional)')
-            .setRequired(false)
-        )
+    .addSubcommand(sub =>
+      sub.setName('add').setDescription('Exclude channels (up to 5)')
+        .addChannelOption(o => o.setName('c1').setDescription('Channel 1').setRequired(true))
+        .addChannelOption(o => o.setName('c2').setDescription('Channel 2'))
+        .addChannelOption(o => o.setName('c3').setDescription('Channel 3'))
+        .addChannelOption(o => o.setName('c4').setDescription('Channel 4'))
+        .addChannelOption(o => o.setName('c5').setDescription('Channel 5'))
     )
-    .addSubcommand((sub) =>
-      sub
-        .setName('remove')
-        .setDescription('Remove a channel from XP exclude list')
-        .addChannelOption((opt) =>
-          opt
-            .setName('channel')
-            .setDescription('Channel to remove')
-            .setRequired(true)
-        )
+    .addSubcommand(sub =>
+      sub.setName('remove').setDescription('Remove a channel')
+        .addChannelOption(o => o.setName('channel').setDescription('Channel to remove').setRequired(true))
     )
-    .addSubcommand((sub) =>
-      sub
-        .setName('list')
-        .setDescription('List all excluded channels')
+    .addSubcommand(sub =>
+      sub.setName('list').setDescription('List excluded channels')
     ),
   
   async execute(interaction) {
     try {
-      const OWNER_ID = process.env.OWNER_ID;
-      if (interaction.user.id !== OWNER_ID) {
-        await interaction.reply({ content: '⛔ Owner only!', flags: MessageFlags.Ephemeral });
+      if (interaction.user.id !== process.env.OWNER_ID) {
+        await interaction.reply({ content: '⛔ Owner only!', ephemeral: true });
         return;
       }
 
-      const subcommand = interaction.options.getSubcommand();
-      const xpSystem = this.xpSystem;
+      const xpState = this.xpState;
+      const sub = interaction.options.getSubcommand();
 
-      if (subcommand === 'add') {
+      if (sub === 'add') {
         const channels = [];
         for (let i = 1; i <= 5; i++) {
-          const channel = interaction.options.getChannel(`channel${i}`);
-          if (channel) channels.push(channel);
-        }
-
-        if (channels.length === 0) {
-          await interaction.reply({ content: '❌ No channels provided', flags: MessageFlags.Ephemeral });
-          return;
+          const c = interaction.options.getChannel(`c${i}`);
+          if (c) channels.push(c);
         }
 
         let added = 0;
-        let already = 0;
-
         for (const channel of channels) {
-          if (xpSystem.addXpExcludeChannel(channel.id)) {
+          if (!xpState.excludeChannels.includes(channel.id)) {
+            xpState.excludeChannels.push(channel.id);
             added++;
-            console.log(`✅ Excluded channel: ${channel.name}`);
-          } else {
-            already++;
+            console.log(`✅ Excluded: ${channel.name}`);
           }
         }
 
         const embed = new EmbedBuilder()
           .setColor('#FF6B6B')
-          .setTitle('✅ Excluded Channels Updated')
+          .setTitle('✅ Channels Updated')
           .addFields(
-            { name: '✅ Added', value: `${added}`, inline: true },
-            { name: '⚠️ Already Excluded', value: `${already}`, inline: true }
+            { name: 'Added', value: `${added}`, inline: true },
+            { name: 'Total', value: `${xpState.excludeChannels.length}`, inline: true }
           );
 
-        const currentChannels = xpSystem.getXpExcludeChannels();
-        if (currentChannels.length > 0) {
-          embed.addFields({
-            name: '📋 All Excluded Channels',
-            value: currentChannels.map(id => `<#${id}>`).join(', '),
-            inline: false
-          });
+        if (xpState.excludeChannels.length > 0) {
+          embed.addFields({ name: 'Excluded', value: xpState.excludeChannels.map(id => `<#${id}>`).join(', '), inline: false });
         }
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      } else if (subcommand === 'remove') {
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+      } 
+      else if (sub === 'remove') {
         const channel = interaction.options.getChannel('channel');
-        if (!channel) {
-          await interaction.reply({ content: '❌ Invalid channel', ephemeral: true });
-          return;
-        }
+        const idx = xpState.excludeChannels.indexOf(channel.id);
 
-        if (xpSystem.removeXpExcludeChannel(channel.id)) {
+        if (idx > -1) {
+          xpState.excludeChannels.splice(idx, 1);
           const embed = new EmbedBuilder()
             .setColor('#00A4FF')
             .setTitle('✅ Channel Removed')
-            .setDescription(`Removed <#${channel.id}> from excluded channels`);
+            .setDescription(`Removed <#${channel.id}>`)
+            .addFields({ name: 'Remaining', value: xpState.excludeChannels.length > 0 ? xpState.excludeChannels.map(id => `<#${id}>`).join(', ') : 'None', inline: false });
 
-          const currentChannels = xpSystem.getXpExcludeChannels();
-          if (currentChannels.length > 0) {
-            embed.addFields({
-              name: '📋 Remaining Excluded Channels',
-              value: currentChannels.map(id => `<#${id}>`).join(', '),
-              inline: false
-            });
-          } else {
-            embed.addFields({
-              name: '📋 Excluded Channels',
-              value: 'None',
-              inline: false
-            });
-          }
-
-          await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+          await interaction.reply({ embeds: [embed], ephemeral: true });
         } else {
-          await interaction.reply({ content: '⚠️ Channel was not in excluded list', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: '⚠️ Channel not excluded', ephemeral: true });
         }
-      } else if (subcommand === 'list') {
-        const currentChannels = xpSystem.getXpExcludeChannels();
-        
-        if (currentChannels.length === 0) {
-          await interaction.reply({ content: '📭 No excluded channels. XP is earned in all channels!', flags: MessageFlags.Ephemeral });
+      } 
+      else if (sub === 'list') {
+        if (xpState.excludeChannels.length === 0) {
+          await interaction.reply({ content: '📭 No excluded channels. XP earned everywhere!', ephemeral: true });
           return;
         }
 
         const embed = new EmbedBuilder()
           .setColor('#FF6B6B')
-          .setTitle('📋 Excluded Channels (XP NOT Earned Here)')
-          .setDescription(currentChannels.map(id => `<#${id}>`).join('\n'))
-          .addFields({
-            name: '👥 Total',
-            value: `${currentChannels.length}`,
-            inline: true
-          })
-          .setTimestamp();
+          .setTitle('📋 Excluded Channels')
+          .setDescription(xpState.excludeChannels.map(id => `<#${id}>`).join('\n'))
+          .addFields({ name: 'Count', value: `${xpState.excludeChannels.length}`, inline: true });
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
       }
     } catch (err) {
-      console.error('Error in xpchannels command:', err);
-      try {
-        if (!interaction.replied) {
-          await interaction.reply({ content: '❌ Error managing excluded channels', ephemeral: true });
-        }
-      } catch (e) {
-        console.error('Failed to send error reply:', e);
-      }
+      console.error('xpchannels error:', err.message);
+      await interaction.reply({ content: '❌ Error', ephemeral: true });
     }
   },
 };

@@ -2,7 +2,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Client, Collection, GatewayIntentBits, Events } = require('discord.js');
-const xpSystem = require('./xpSystem');
 
 const client = new Client({
   intents: [
@@ -16,7 +15,18 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// Load every command file in ./commands automatically.
+// ===== SHARED STATE (XP System) =====
+const xpState = {
+  data: {},
+  roles: [],
+  excludeChannels: [],
+  resetTimer: null,
+  resetTimestamp: null,
+};
+
+client.xpState = xpState; // Attach to client so all commands can access it
+
+// ===== LOAD COMMANDS =====
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
 
@@ -26,19 +36,19 @@ for (const file of commandFiles) {
     if ('data' in command && 'execute' in command) {
       client.commands.set(command.data.name, command);
     } else {
-      console.warn(`[WARNING] commands/${file} is missing a required "data" or "execute" export.`);
+      console.warn(`[WARNING] commands/${file} missing "data" or "execute".`);
     }
   } catch (err) {
-    console.error(`Error loading command ${file}:`, err);
+    console.error(`Error loading command ${file}:`, err.message);
   }
 }
 
 const XP_PER_MESSAGE = 0.5;
 
+// ===== BOT READY =====
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot ready as ${readyClient.user.tag}`);
   
-  // Register commands globally
   try {
     const commands = readyClient.commands.map((cmd) => cmd.data.toJSON());
     await readyClient.application.commands.set(commands);
@@ -48,107 +58,101 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 });
 
-// Handle interaction errors gracefully
+// ===== HANDLE COMMANDS =====
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const command = interaction.client.commands.get(interaction.commandName);
   if (!command) {
-    console.error(`No handler found for "/${interaction.commandName}".`);
+    console.error(`No handler for /${interaction.commandName}`);
     try {
       await interaction.reply({ content: 'Command not found.', ephemeral: true });
     } catch (err) {
-      console.error('Failed to reply to command:', err);
+      console.error('Error replying:', err.message);
     }
     return;
   }
 
   try {
-    // Pass xpSystem to commands that need it
-    command.xpSystem = xpSystem;
+    command.xpState = xpState;
     await command.execute(interaction);
   } catch (error) {
-    console.error(`Error while executing /${interaction.commandName}:`, error);
-    const errorReply = { content: '❌ Something went wrong running that command. Try again later.', ephemeral: true };
+    console.error(`Error executing /${interaction.commandName}:`, error.message);
+    const errorMsg = { content: '❌ Error running command', ephemeral: true };
     try {
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorReply);
+        await interaction.followUp(errorMsg);
       } else {
-        await interaction.reply(errorReply);
+        await interaction.reply(errorMsg);
       }
     } catch (err) {
-      console.error('Failed to send error reply:', err);
+      console.error('Error sending error reply:', err.message);
     }
   }
 });
 
-// XP tracking on message
+// ===== XP TRACKING =====
 client.on(Events.MessageCreate, async (message) => {
   try {
-    if (message.author.bot) return;
-    if (!message.guild || message.guild.id !== process.env.OWNER_SERVER_ID) return;
+    if (message.author.bot || !message.guild) return;
+    if (message.guild.id !== process.env.OWNER_SERVER_ID) return;
 
-    // Check if channel is excluded from XP
-    if (xpSystem.isChannelExcluded(message.channelId)) {
+    // Check if channel is excluded
+    if (xpState.excludeChannels.includes(message.channelId)) {
       return;
     }
 
-    // Check if user has any XP roles
+    // Check if user has XP role
     const userRoles = message.member?.roles.cache.map(r => r.id) || [];
-    const xpRoles = xpSystem.getXpRoles();
-    const hasXpRole = userRoles.some(rid => xpRoles.includes(rid));
+    const hasXpRole = userRoles.some(rid => xpState.roles.includes(rid));
 
     if (hasXpRole) {
-      xpSystem.addXp(message.author.id, XP_PER_MESSAGE);
-      console.log(`✓ ${message.author.username} gained ${XP_PER_MESSAGE} XP in #${message.channel.name}`);
+      xpState.data[message.author.id] = (xpState.data[message.author.id] || 0) + XP_PER_MESSAGE;
+      console.log(`✓ ${message.author.username} +${XP_PER_MESSAGE} XP`);
     }
   } catch (err) {
-    console.error('Error in messageCreate handler:', err);
+    console.error('Error in message handler:', err.message);
   }
 });
 
-// Auto leave guilds that aren't the owner's server
-const OWNER_SERVER_ID = process.env.OWNER_SERVER_ID;
+// ===== AUTO-LEAVE NON-OWNER GUILDS =====
 client.on(Events.GuildCreate, (guild) => {
   try {
-    console.log(`Tried to join guild: ${guild.name} (${guild.id})`);
-    if (guild.id !== OWNER_SERVER_ID) {
+    if (guild.id !== process.env.OWNER_SERVER_ID) {
       guild.leave();
       console.log(`Left guild: ${guild.name}`);
     }
   } catch (err) {
-    console.error('Error in guildCreate handler:', err);
+    console.error('Error in guildCreate:', err.message);
   }
 });
 
-// Global error handler for unhandled promise rejections
-process.on('unhandledRejection', error => {
-  console.error('Unhandled Promise Rejection:', error);
+// ===== GLOBAL ERROR HANDLERS =====
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled Rejection:', error?.message || error);
 });
 
-// Global error handler for uncaught exceptions
-process.on('uncaughtException', error => {
-  console.error('Uncaught Exception:', error);
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error?.message || error);
 });
 
-// Graceful disconnect handler
 client.on(Events.Warn, (warning) => {
-  console.warn('Warning:', warning);
+  console.warn('Discord warning:', warning);
 });
 
 client.on('error', (error) => {
-  console.error('Discord.js error:', error);
+  console.error('Discord error:', error?.message || error);
 });
 
+// ===== LOGIN =====
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 if (!TOKEN) throw new Error('DISCORD_BOT_TOKEN not set');
 
-// Login with retry logic
 async function login() {
   try {
     await client.login(TOKEN);
   } catch (err) {
-    console.error('Failed to login, retrying in 10s...', err);
+    console.error('Login failed, retrying in 10s...', err.message);
     setTimeout(login, 10000);
   }
 }
