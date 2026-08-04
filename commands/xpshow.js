@@ -8,18 +8,24 @@ let xpResetTimer = null;
 let resetInProgress = false;
 let resetTimestamp = null;
 
-function formatTimeRemaining(ms) {
-  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+function getTimeRemaining(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
   
-  if (days > 0) {
-    return `${days}d ${hours}h ${minutes}m`;
-  } else if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  } else {
-    return `${minutes}m`;
-  }
+  return {
+    days,
+    hours,
+    minutes,
+    seconds,
+    totalSeconds
+  };
+}
+
+function formatTime(time) {
+  return `${String(time.days).padStart(2, '0')}d ${String(time.hours).padStart(2, '0')}h ${String(time.minutes).padStart(2, '0')}m ${String(time.seconds).padStart(2, '0')}s`;
 }
 
 async function performReset(client) {
@@ -46,7 +52,7 @@ async function performReset(client) {
               value: `<t:${Math.floor((Date.now() + 14 * 24 * 60 * 60 * 1000) / 1000)}:R>`,
               inline: false
             })
-            .setFooter({ text: '${XP_PER_MESSAGE} XP per message' });
+            .setFooter({ text: `${XP_PER_MESSAGE} XP per message` });
           
           await channel.send({ embeds: [resetEmbed] });
         }
@@ -61,94 +67,209 @@ async function performReset(client) {
   }
 }
 
+async function updateTimerMessage(message) {
+  try {
+    if (!resetTimestamp || !message) return;
+
+    const timeRemaining = resetTimestamp - Date.now();
+    if (timeRemaining <= 0) {
+      await message.edit({ content: 'Time expired!' });
+      return;
+    }
+
+    const time = getTimeRemaining(timeRemaining);
+    const timerEmbed = new EmbedBuilder()
+      .setColor('#0099FF')
+      .setTitle('⏱️ XP RESET TIMER')
+      .setDescription(`\`\`\`\n${formatTime(time)}\n\`\`\``)
+      .addFields({
+        name: 'Seconds Remaining',
+        value: `${time.totalSeconds.toLocaleString()}`,
+        inline: true
+      },
+      {
+        name: 'Next Reset',
+        value: `<t:${Math.floor(resetTimestamp / 1000)}:R>`,
+        inline: true
+      })
+      .setFooter({ text: 'Updates every 10 seconds' });
+
+    await message.edit({ embeds: [timerEmbed] });
+  } catch (err) {
+    console.error('Error updating timer:', err);
+  }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('xpshow')
-    .setDescription('Show XP leaderboard (Owner only)')
+    .setDescription('Show XP leaderboard by roles (Owner only)')
     .setDefaultMemberPermissions(0),
   
   async execute(interaction) {
     try {
       const OWNER_ID = process.env.OWNER_ID;
       if (interaction.user.id !== OWNER_ID) {
-        const timerEmbed = new EmbedBuilder()
-          .setColor('#00A4FF')
-          .setTitle('⏱️ XP RESET TIMER')
-          .setDescription(resetTimestamp ? formatTimeRemaining(resetTimestamp - Date.now()) : 'Not started');
-        
-        await interaction.reply({ embeds: [timerEmbed], flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: '⛔ Owner only!', flags: MessageFlags.Ephemeral });
         return;
       }
 
-      // Create leaderboard sorted by XP
-      const sorted = Object.entries(xpData)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 15); // Top 15
+      if (xpRoles.length === 0) {
+        await interaction.reply({
+          content: '❌ No XP roles set. Use `/xproles` to add roles.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
 
-      const leaderboardText = sorted.length > 0
-        ? sorted.map(([userId, xp], index) => {
-            const medals = ['🥇', '🥈', '🥉'];
-            const medal = medals[index] || `${index + 1}.`;
-            return `${medal} <@${userId}> • **${xp.toFixed(2)} XP**`;
-          }).join('\n')
-        : '📭 No XP data yet';
+      // Create embeds for each role
+      const embeds = [];
+      const guild = interaction.guild;
 
-      // Get total players
-      const totalPlayers = Object.keys(xpData).length;
-      const totalXp = Object.values(xpData).reduce((a, b) => a + b, 0);
-
-      // Create main leaderboard embed
-      const leaderboardEmbed = new EmbedBuilder()
-        .setColor('#00A4FF')
-        .setTitle('📊 XP LEADERBOARD')
-        .setDescription(leaderboardText)
-        .setThumbnail(interaction.client.user.displayAvatarURL())
-        .addFields(
-          {
-            name: '👥 Players',
-            value: `${totalPlayers}`,
-            inline: true
-          },
-          {
-            name: '⭐ Total XP',
-            value: `${totalXp.toFixed(2)}`,
-            inline: true
-          },
-          {
-            name: '💰 Per Message',
-            value: `${XP_PER_MESSAGE} XP`,
-            inline: true
-          },
-          {
-            name: '🎯 Active Roles',
-            value: xpRoles.length > 0 ? xpRoles.map(id => `<@&${id}>`).join(', ') : 'None set',
-            inline: false
+      for (const roleId of xpRoles) {
+        try {
+          const role = await guild.roles.fetch(roleId);
+          if (!role) {
+            console.warn(`Role ${roleId} not found`);
+            continue;
           }
-        )
-        .setTimestamp();
 
-      // Create timer embed (big and blue)
-      const timeRemaining = resetTimestamp ? resetTimestamp - Date.now() : 14 * 24 * 60 * 60 * 1000;
+          // Get all members with this role
+          const membersWithRole = await guild.members.fetch();
+          const usersWithRole = membersWithRole
+            .filter(member => member.roles.cache.has(roleId))
+            .map(member => ({
+              id: member.user.id,
+              name: member.user.username,
+              xp: xpData[member.user.id] || 0
+            }))
+            .sort((a, b) => b.xp - a.xp);
+
+          if (usersWithRole.length === 0) {
+            continue;
+          }
+
+          // Build leaderboard for this role
+          const leaderboard = usersWithRole
+            .slice(0, 10)
+            .map((user, index) => {
+              const medals = ['🥇', '🥈', '🥉'];
+              const medal = medals[index] || `${index + 1}.`;
+              return `${medal} <@${user.id}> • **${user.xp.toFixed(2)} XP**`;
+            })
+            .join('\n');
+
+          const roleEmbed = new EmbedBuilder()
+            .setColor(role.color || '#00A4FF')
+            .setTitle(`${role.name}`)
+            .setDescription(leaderboard || 'No one with XP yet')
+            .addFields({
+              name: '👥 Members with XP',
+              value: `${usersWithRole.length}`,
+              inline: true
+            },
+            {
+              name: '⭐ Total XP',
+              value: `${usersWithRole.reduce((a, b) => a + b.xp, 0).toFixed(2)}`,
+              inline: true
+            },
+            {
+              name: '💰 Per Message',
+              value: `${XP_PER_MESSAGE} XP`,
+              inline: true
+            })
+            .setTimestamp();
+
+          embeds.push(roleEmbed);
+        } catch (err) {
+          console.error(`Error fetching role ${roleId}:`, err);
+        }
+      }
+
+      if (embeds.length === 0) {
+        await interaction.reply({
+          content: '❌ No roles found with members.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      // Create timer embed (big and blue with live countdown)
+      if (!resetTimestamp) {
+        const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
+        resetTimestamp = Date.now() + twoWeeksMs;
+      }
+
+      const timeRemaining = resetTimestamp - Date.now();
+      const time = getTimeRemaining(timeRemaining);
+
       const timerEmbed = new EmbedBuilder()
         .setColor('#0099FF')
         .setTitle('⏱️ XP RESET TIMER')
-        .setDescription(`\`\`\`\n${formatTimeRemaining(timeRemaining)}\n\`\`\``)
+        .setDescription(`\`\`\`\n${formatTime(time)}\n\`\`\``)
         .addFields({
+          name: 'Seconds Remaining',
+          value: `${time.totalSeconds.toLocaleString()}`,
+          inline: true
+        },
+        {
           name: 'Next Reset',
-          value: `<t:${Math.floor((Date.now() + timeRemaining) / 1000)}:R>`,
-          inline: false
+          value: `<t:${Math.floor(resetTimestamp / 1000)}:R>`,
+          inline: true
         })
-        .setFooter({ text: 'Resets automatically in 2 weeks' });
+        .setFooter({ text: 'Updates every 10 seconds' });
 
-      await interaction.reply({ embeds: [leaderboardEmbed, timerEmbed] });
+      // Send all embeds
+      const allEmbeds = [...embeds, timerEmbed];
+      const response = await interaction.reply({ embeds: allEmbeds });
+
+      // Update timer every 10 seconds
+      const timerInterval = setInterval(async () => {
+        try {
+          if (!resetTimestamp) {
+            clearInterval(timerInterval);
+            return;
+          }
+
+          const timeRemaining = resetTimestamp - Date.now();
+          if (timeRemaining <= 0) {
+            clearInterval(timerInterval);
+            return;
+          }
+
+          const time = getTimeRemaining(timeRemaining);
+          const updatedEmbed = new EmbedBuilder()
+            .setColor('#0099FF')
+            .setTitle('⏱️ XP RESET TIMER')
+            .setDescription(`\`\`\`\n${formatTime(time)}\n\`\`\``)
+            .addFields({
+              name: 'Seconds Remaining',
+              value: `${time.totalSeconds.toLocaleString()}`,
+              inline: true
+            },
+            {
+              name: 'Next Reset',
+              value: `<t:${Math.floor(resetTimestamp / 1000)}:R>`,
+              inline: true
+            })
+            .setFooter({ text: 'Updates every 10 seconds' });
+
+          // Update only the timer embed (last one)
+          const updatedEmbeds = [...embeds, updatedEmbed];
+          await response.edit({ embeds: updatedEmbeds });
+        } catch (err) {
+          console.error('Error updating timer:', err);
+          clearInterval(timerInterval);
+        }
+      }, 10000); // Update every 10 seconds
 
       // Start 2-week timer if not already running
       if (!xpResetTimer) {
         const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
-        resetTimestamp = Date.now() + twoWeeksMs;
         
         xpResetTimer = setTimeout(async () => {
           xpResetTimer = null;
+          clearInterval(timerInterval);
           await performReset(interaction.client);
         }, twoWeeksMs);
 
