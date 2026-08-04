@@ -40,86 +40,109 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    const config = loadConfig();
-    
-    // Check if person is set
-    if (!config.vouchPerson) {
-      await interaction.reply({
-        content: 'Owner has not set a person to vouch for yet',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    const category = interaction.options.getString('category');
-    const rating = interaction.options.getInteger('rating');
-    const message = interaction.options.getString('message') || 'No message';
-    const vouchedBy = interaction.user;
-
-    // Format the category
-    const categoryMap = {
-      accounts: 'Accounts',
-      prem_gen: 'Prem Gen',
-      methods: 'Methods',
-      replacements: 'Replacements',
-      amazon_card: 'Amazon Card',
-      other: 'Other',
-    };
-
-    const categoryName = categoryMap[category] || category;
-    const stars = '⭐'.repeat(rating) + '🌑'.repeat(5 - rating);
-
-    const embed = new EmbedBuilder()
-      .setColor('#2f3136')
-      .setTitle('✅ New Vouch')
-      .setDescription(`**Vouch Category:** ${categoryName}`)
-      .addFields(
-        { name: 'Vouching For', value: `<@${config.vouchPerson}>`, inline: true },
-        { name: 'Rating', value: stars, inline: true },
-        { name: 'Message', value: message, inline: false },
-        {
-          name: 'Vouched By',
-          value: vouchedBy.toString(),
-          inline: false,
-        },
-        {
-          name: 'Time',
-          value: `<t:${Math.floor(Date.now() / 1000)}:F>`,
-          inline: false,
-        }
-      )
-      .setAuthor({
-        name: vouchedBy.username,
-        iconURL: vouchedBy.displayAvatarURL({ size: 256 }),
-      });
-
-    const vouchChannelId = process.env.VOUCH_CHANNEL_ID;
-    if (!vouchChannelId) {
-      await interaction.reply({
-        content: 'Vouch channel not configured',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
     try {
-      const channel = await interaction.client.channels.fetch(vouchChannelId);
-      const vouchMessage = await channel.send({ embeds: [embed] });
+      const config = loadConfig();
+      
+      // Check if person is set
+      if (!config.vouchPerson) {
+        await interaction.reply({
+          content: '⚠️ Owner has not set a person to vouch for yet',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
 
-      // Auto react with a heart
-      await vouchMessage.react('❤️');
-      console.log('✅ Reacted with heart');
+      const category = interaction.options.getString('category');
+      const rating = interaction.options.getInteger('rating');
+      const message = interaction.options.getString('message') || 'No message';
+      const vouchedBy = interaction.user;
 
-      await interaction.reply({
-        content: '✅ Vouch posted!',
-        flags: MessageFlags.Ephemeral,
-      });
-    } catch (error) {
-      console.error('Failed to post vouch:', error);
-      await interaction.reply({
-        content: 'Failed to post vouch',
-        flags: MessageFlags.Ephemeral,
-      });
+      // Format the category
+      const categoryMap = {
+        accounts: 'Accounts',
+        prem_gen: 'Prem Gen',
+        methods: 'Methods',
+        replacements: 'Replacements',
+        amazon_card: 'Amazon Card',
+        other: 'Other',
+      };
+
+      const categoryName = categoryMap[category] || category;
+      const stars = '⭐'.repeat(rating) + '🌑'.repeat(5 - rating);
+
+      const embed = new EmbedBuilder()
+        .setColor('#2f3136')
+        .setTitle('✅ New Vouch')
+        .setDescription(`**Vouch Category:** ${categoryName}`)
+        .addFields(
+          { name: 'Vouching For', value: `<@${config.vouchPerson}>`, inline: true },
+          { name: 'Rating', value: stars, inline: true },
+          { name: 'Message', value: message, inline: false },
+          {
+            name: 'Vouched By',
+            value: vouchedBy.toString(),
+            inline: false,
+          },
+          {
+            name: 'Time',
+            value: `<t:${Math.floor(Date.now() / 1000)}:F>`,
+            inline: false,
+          }
+        )
+        .setAuthor({
+          name: vouchedBy.username,
+          iconURL: vouchedBy.displayAvatarURL({ size: 256 }),
+        })
+        .setTimestamp();
+
+      const vouchChannelId = process.env.VOUCH_CHANNEL_ID;
+      if (!vouchChannelId) {
+        await interaction.reply({
+          content: '❌ Vouch channel not configured',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      try {
+        const channel = await interaction.client.channels.fetch(vouchChannelId);
+        if (!channel) {
+          throw new Error('Channel not found');
+        }
+
+        const vouchMessage = await channel.send({ embeds: [embed] });
+
+        // Auto react with a heart with fallback
+        try {
+          await vouchMessage.react('❤️');
+          console.log('✅ Reacted with heart');
+        } catch (reactionErr) {
+          console.error('Failed to react, continuing anyway:', reactionErr);
+        }
+
+        await interaction.reply({
+          content: '✅ Vouch posted!',
+          flags: MessageFlags.Ephemeral,
+        });
+      } catch (channelErr) {
+        console.error('Failed to post vouch:', channelErr);
+        await interaction.reply({
+          content: '❌ Failed to post vouch to channel',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    } catch (err) {
+      console.error('Error in vouch command:', err);
+      try {
+        if (!interaction.replied) {
+          await interaction.reply({
+            content: '❌ An unexpected error occurred',
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+      } catch (e) {
+        console.error('Failed to send error reply:', e);
+      }
     }
   },
 };
