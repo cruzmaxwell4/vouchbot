@@ -67,7 +67,6 @@ module.exports = {
         return;
       }
 
-      // Defer the reply as this might take time
       await interaction.deferReply();
 
       const xpSystem = this.xpSystem;
@@ -82,6 +81,7 @@ module.exports = {
 
       const embeds = [];
       const guild = interaction.guild;
+      const xpData = xpSystem.getXpData();
 
       for (const roleId of xpRoles) {
         try {
@@ -91,22 +91,22 @@ module.exports = {
             continue;
           }
 
-          const membersWithRole = await guild.members.fetch();
-          const usersWithRole = membersWithRole
+          // Use cache instead of fetching all members
+          const membersWithRole = guild.members.cache
             .filter(member => member.roles.cache.has(roleId))
             .map(member => ({
               id: member.user.id,
               name: member.user.username,
-              xp: xpSystem.getXpData()[member.user.id] || 0
+              xp: xpData[member.user.id] || 0
             }))
             .filter(user => user.xp > 0)
             .sort((a, b) => b.xp - a.xp);
 
-          if (usersWithRole.length === 0) {
+          if (membersWithRole.length === 0) {
             continue;
           }
 
-          const leaderboard = usersWithRole
+          const leaderboard = membersWithRole
             .slice(0, 10)
             .map((user, index) => {
               const medals = ['🥇', '🥈', '🥉'];
@@ -121,12 +121,12 @@ module.exports = {
             .setDescription(leaderboard || 'No one with XP yet')
             .addFields({
               name: '👥 Members with XP',
-              value: `${usersWithRole.length}`,
+              value: `${membersWithRole.length}`,
               inline: true
             },
             {
               name: '⭐ Total XP',
-              value: `${usersWithRole.reduce((a, b) => a + b.xp, 0).toFixed(2)}`,
+              value: `${membersWithRole.reduce((a, b) => a + b.xp, 0).toFixed(2)}`,
               inline: true
             },
             {
