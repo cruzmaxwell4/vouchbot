@@ -15,19 +15,7 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// SHARED STATE
-const xpState = {
-  data: {},
-  roles: [],
-  excludeChannels: [],
-  panelMessageId: null,
-  panelChannelId: null,
-  refreshInterval: null,
-};
-
-client.xpState = xpState;
-
-// LOAD COMMANDS
+// Load commands
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
 
@@ -41,8 +29,6 @@ for (const file of commandFiles) {
     console.error(`Error loading ${file}:`, err.message);
   }
 }
-
-const XP_PER_MESSAGE = 0.5;
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot ready as ${readyClient.user.tag}`);
@@ -63,7 +49,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (!command) return;
 
   try {
-    command.xpState = xpState;
     await command.execute(interaction);
   } catch (error) {
     console.error(`Error in ${interaction.commandName}:`, error.message);
@@ -77,25 +62,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (e) {
       console.error('Reply error:', e.message);
     }
-  }
-});
-
-client.on(Events.MessageCreate, async (message) => {
-  try {
-    if (message.author.bot || !message.guild) return;
-    if (message.guild.id !== process.env.OWNER_SERVER_ID) return;
-
-    if (xpState.excludeChannels.includes(message.channelId)) return;
-
-    const userRoles = message.member?.roles.cache.map(r => r.id) || [];
-    const hasXpRole = userRoles.some(rid => xpState.roles.includes(rid));
-
-    if (hasXpRole) {
-      xpState.data[message.author.id] = (xpState.data[message.author.id] || 0) + XP_PER_MESSAGE;
-      console.log(`✓ ${message.author.username} +${XP_PER_MESSAGE} XP`);
-    }
-  } catch (err) {
-    console.error('Message error:', err.message);
   }
 });
 
